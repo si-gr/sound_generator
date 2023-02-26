@@ -4,6 +4,7 @@ import android.annotation.TargetApi;
 import android.media.AudioFormat;
 import android.media.AudioManager;
 import android.media.AudioTrack;
+import android.media.AudioAttributes;
 import android.os.Build;
 
 import io.github.mertguner.sound_generator.generators.sawtoothGenerator;
@@ -24,6 +25,12 @@ public class SoundGenerator {
     private int minSamplesSize;
     private WaveTypes waveType = WaveTypes.SINUSOIDAL;
     private float rightVolume = 1, leftVolume = 1;
+    private boolean cleanStart = false;
+    private float volume = 0.5f;
+
+    public void setCleanStart(boolean cleanStart) {
+        this.cleanStart = cleanStart;
+    }
 
     public void setAutoUpdateOneCycleSample(boolean autoUpdateOneCycleSample) {
         if (generator != null)
@@ -68,11 +75,15 @@ public class SoundGenerator {
     }
 
 
-    public void setVolume(float volume) {
-        volume = Math.max(0, Math.min(1, volume));
+    public void setVolume(float _volume) {
+        this.volume = Math.max(0, Math.min(1, _volume));
 
-        if (audioTrack != null) {
-            audioTrack.setStereoVolume(leftVolume * volume, rightVolume * volume);
+        updateVolume();
+    }
+
+    private void updateVolume() {
+        if (this.audioTrack != null) {
+            this.audioTrack.setStereoVolume(this.leftVolume * this.volume, this.rightVolume * this.volume);
         }
     }
 
@@ -94,21 +105,11 @@ public class SoundGenerator {
 
     public boolean init(int sampleRate) {
         try {
-            minSamplesSize = AudioTrack.getMinBufferSize(
-                    sampleRate,
-                    AudioFormat.CHANNEL_OUT_MONO,
-                    AudioFormat.ENCODING_PCM_16BIT);
-
-            generator = new signalDataGenerator(minSamplesSize, sampleRate);
-
-            audioTrack = new AudioTrack(
-                    AudioManager.STREAM_MUSIC,
-                    sampleRate,
-                    AudioFormat.CHANNEL_OUT_MONO,
-                    AudioFormat.ENCODING_PCM_16BIT,
-                    minSamplesSize,
-                    AudioTrack.MODE_STREAM);
-
+            this.minSamplesSize = 2000;
+            //sampleRate = 44100;
+            this.generator = new signalDataGenerator(this.minSamplesSize, sampleRate);
+            this.audioTrack = new AudioTrack.Builder().setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION_EVENT)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build()).setAudioFormat(new AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(sampleRate).build()).setBufferSizeInBytes(this.minSamplesSize).build();
             return true;
         }catch (Exception ex)
         {
@@ -130,9 +131,26 @@ public class SoundGenerator {
             public void run() {
                 audioTrack.flush();
                 audioTrack.setPlaybackHeadPosition(0);
+                short[] data = generator.getData();
+                audioTrack.write(data, 0, minSamplesSize);
                 audioTrack.play();
+                long startTime = System.nanoTime();
+                boolean updatedVolume = false;
                 while (isPlaying) {
-                    audioTrack.write(generator.getData(), 0, minSamplesSize);
+                    for (long currentTime = System.nanoTime(); currentTime - startTime < 1000000L; currentTime = System.nanoTime()) {
+                        if (currentTime % 1000L < 200L) {
+                            if (!updatedVolume) {
+                                updateVolume();
+                                updatedVolume = true;
+                            }
+                        } else {
+                            updatedVolume = false;
+                        }
+                    }
+                    data = generator.getData();
+                    audioTrack.write(data, 0, minSamplesSize);
+                    startTime = System.nanoTime();
+
                 }
             }
         }
